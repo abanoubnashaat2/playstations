@@ -94,6 +94,12 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
         osc.start();
         osc.stop(now + 0.5);
       }
+      
+      // Clean up context after sound plays to prevent reaching browser limit
+      setTimeout(() => {
+        ctx.close();
+      }, 600);
+      
     } catch (e) {
       console.error("Audio play failed", e);
     }
@@ -101,11 +107,15 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
 
   // Browser Notification Helper
   const sendNotification = () => {
-    if (Notification.permission === 'granted') {
-      new Notification(`Time's Up!`, {
-        body: `Session on ${name} has finished.`,
-        icon: '/vite.svg'
-      });
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(`Time's Up!`, {
+          body: `Session on ${name} has finished.`,
+          icon: '/vite.svg'
+        });
+      } catch (e) {
+        console.error("Notification failed", e);
+      }
     }
   };
 
@@ -203,9 +213,12 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
         alert('Please enter valid minutes for fixed session');
         return;
       }
-      // Request notification permission
-      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
-        Notification.requestPermission();
+      
+      // Safely request notification permission
+      if ('Notification' in window) {
+        if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+          Notification.requestPermission().catch(err => console.error("Notification permission request failed", err));
+        }
       }
     }
 
