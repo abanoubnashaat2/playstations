@@ -1,0 +1,5 @@
+{
+  "name": "Copy of PS Lounge Manager",
+  "description": "A management dashboard for PlayStation cafes to track 3 screens, calculate session costs based on hourly rates, and monitor daily revenue.",
+  "requestFramePermissions": []
+}
