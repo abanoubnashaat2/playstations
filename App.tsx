@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Gamepad2, History, Trash2, AlertTriangle, Plus } from 'lucide-react';
 import ScreenCard from './components/ScreenCard';
 import { SessionRecord, Screen } from './types';
@@ -11,19 +11,36 @@ interface ConfirmationState {
 }
 
 const App: React.FC = () => {
-  // Screens State
-  const [screens, setScreens] = useState<Screen[]>([
-    { id: '1', name: 'شاشة 1' },
-    { id: '2', name: 'شاشة 2' },
-    { id: '3', name: 'شاشة 3' }
-  ]);
+  // Initialize state from localStorage if available, else default
+  const [screens, setScreens] = useState<Screen[]>(() => {
+    const saved = localStorage.getItem('ps_screens');
+    return saved ? JSON.parse(saved) : [
+      { id: '1', name: 'شاشة 1' },
+      { id: '2', name: 'شاشة 2' },
+      { id: '3', name: 'شاشة 3' }
+    ];
+  });
 
-  const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>(() => {
+    const saved = localStorage.getItem('ps_history');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [confirmState, setConfirmState] = useState<ConfirmationState>({
     isOpen: false,
     type: null,
     message: ''
   });
+
+  // Persist Screens
+  useEffect(() => {
+    localStorage.setItem('ps_screens', JSON.stringify(screens));
+  }, [screens]);
+
+  // Persist History
+  useEffect(() => {
+    localStorage.setItem('ps_history', JSON.stringify(sessionHistory));
+  }, [sessionHistory]);
   
   const handleSessionComplete = (record: SessionRecord) => {
     setSessionHistory(prev => [record, ...prev]);

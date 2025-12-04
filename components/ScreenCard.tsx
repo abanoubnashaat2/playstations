@@ -9,7 +9,16 @@ interface ScreenCardProps {
   onSessionComplete: (record: SessionRecord) => void;
 }
 
+interface SavedState {
+  isActive: boolean;
+  startTime: number | null;
+  hourlyRate: string;
+  customerName: string;
+}
+
 const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionComplete }) => {
+  const storageKey = `screen_state_${id}`;
+
   const [isActive, setIsActive] = useState(false);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -22,6 +31,38 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
 
   // Ref for the interval
   const timerRef = useRef<number | null>(null);
+
+  // Load state from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const parsed: SavedState = JSON.parse(saved);
+        setHourlyRate(parsed.hourlyRate);
+        setCustomerName(parsed.customerName);
+        if (parsed.isActive && parsed.startTime) {
+          setStartTime(parsed.startTime);
+          setIsActive(true);
+          // Calculate elapsed immediately
+          const now = Date.now();
+          setElapsedSeconds(Math.floor((now - parsed.startTime) / 1000));
+        }
+      } catch (e) {
+        console.error("Failed to parse saved state", e);
+      }
+    }
+  }, [id, storageKey]);
+
+  // Save state to localStorage whenever relevant changes occur
+  useEffect(() => {
+    const stateToSave: SavedState = {
+      isActive,
+      startTime,
+      hourlyRate,
+      customerName
+    };
+    localStorage.setItem(storageKey, JSON.stringify(stateToSave));
+  }, [isActive, startTime, hourlyRate, customerName, storageKey]);
 
   // Sync temp name if prop changes
   useEffect(() => {
@@ -98,6 +139,9 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
     setStartTime(null);
     setElapsedSeconds(0);
     setCustomerName('');
+    
+    // Explicitly clear specific storage for this screen reset
+    // Note: The useEffect will overwrite this with the reset state immediately after, which is fine.
   };
 
   // Timer Effect
