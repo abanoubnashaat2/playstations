@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Monitor, DollarSign, User, Timer, Pencil, Check, X } from 'lucide-react';
+import { Play, Square, Monitor, DollarSign, User, Pencil, Check, X, Zap, Clock, Hourglass, Bell } from 'lucide-react';
 import { SessionRecord } from '../types';
 
 interface ScreenCardProps {
@@ -9,30 +9,107 @@ interface ScreenCardProps {
   onSessionComplete: (record: SessionRecord) => void;
 }
 
+type SessionType = 'OPEN' | 'FIXED';
+
 interface SavedState {
   isActive: boolean;
   startTime: number | null;
   hourlyRate: string;
   customerName: string;
+  sessionType: SessionType;
+  fixedMinutes: string;
+  isTimeUp: boolean;
 }
 
 const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionComplete }) => {
   const storageKey = `screen_state_${id}`;
 
+  // State
   const [isActive, setIsActive] = useState(false);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [hourlyRate, setHourlyRate] = useState<string>('50');
   const [customerName, setCustomerName] = useState('');
   
-  // Editing Name State
+  // New State for Fixed Time
+  const [sessionType, setSessionType] = useState<SessionType>('OPEN');
+  const [fixedMinutes, setFixedMinutes] = useState<string>('60');
+  const [isTimeUp, setIsTimeUp] = useState(false);
+  
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(name);
 
-  // Ref for the interval
   const timerRef = useRef<number | null>(null);
+  const alarmPlayedRef = useRef(false);
 
-  // Load state from localStorage on mount
+  // Sound Effect Helpers
+  const playTone = (type: 'start' | 'stop' | 'alarm') => {
+    try {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContext) return;
+      
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      const now = ctx.currentTime;
+
+      if (type === 'start') {
+        // Sci-fi Power Up
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(800, now + 0.3);
+        
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.2, now + 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+        
+        osc.start();
+        osc.stop(now + 0.5);
+      } else if (type === 'stop') {
+        // Power Down
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+        
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        
+        osc.start();
+        osc.stop(now + 0.3);
+      } else if (type === 'alarm') {
+        // Alarm Siren
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(440, now);
+        osc.frequency.linearRampToValueAtTime(880, now + 0.1);
+        osc.frequency.linearRampToValueAtTime(440, now + 0.2);
+        osc.frequency.linearRampToValueAtTime(880, now + 0.3);
+        
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+        
+        osc.start();
+        osc.stop(now + 0.5);
+      }
+    } catch (e) {
+      console.error("Audio play failed", e);
+    }
+  };
+
+  // Browser Notification Helper
+  const sendNotification = () => {
+    if (Notification.permission === 'granted') {
+      new Notification(`Time's Up!`, {
+        body: `Session on ${name} has finished.`,
+        icon: '/vite.svg'
+      });
+    }
+  };
+
+  // Load state
   useEffect(() => {
     const saved = localStorage.getItem(storageKey);
     if (saved) {
@@ -40,10 +117,14 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
         const parsed: SavedState = JSON.parse(saved);
         setHourlyRate(parsed.hourlyRate);
         setCustomerName(parsed.customerName);
+        setSessionType(parsed.sessionType || 'OPEN');
+        setFixedMinutes(parsed.fixedMinutes || '60');
+        
         if (parsed.isActive && parsed.startTime) {
           setStartTime(parsed.startTime);
           setIsActive(true);
-          // Calculate elapsed immediately
+          setIsTimeUp(parsed.isTimeUp || false);
+          
           const now = Date.now();
           setElapsedSeconds(Math.floor((now - parsed.startTime) / 1000));
         }
@@ -53,44 +134,55 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
     }
   }, [id, storageKey]);
 
-  // Save state to localStorage whenever relevant changes occur
+  // Save state
   useEffect(() => {
     const stateToSave: SavedState = {
       isActive,
       startTime,
       hourlyRate,
-      customerName
+      customerName,
+      sessionType,
+      fixedMinutes,
+      isTimeUp
     };
     localStorage.setItem(storageKey, JSON.stringify(stateToSave));
-  }, [isActive, startTime, hourlyRate, customerName, storageKey]);
+  }, [isActive, startTime, hourlyRate, customerName, sessionType, fixedMinutes, isTimeUp, storageKey]);
 
-  // Sync temp name if prop changes
   useEffect(() => {
     setTempName(name);
   }, [name]);
 
-  // Format seconds into HH:MM:SS
+  // Format Helpers
   const formatTime = (totalSeconds: number) => {
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    const isNegative = totalSeconds < 0;
+    const absSeconds = Math.abs(totalSeconds);
+    const hours = Math.floor(absSeconds / 3600);
+    const minutes = Math.floor((absSeconds % 3600) / 60);
+    const seconds = absSeconds % 60;
+    
+    const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    return isNegative ? `-${timeStr}` : timeStr;
   };
 
-  // Calculate current cost
+  // Calculations
+  const limitSeconds = parseInt(fixedMinutes) * 60;
+  
+  const displayTime = React.useMemo(() => {
+    if (sessionType === 'OPEN') return elapsedSeconds;
+    // In Fixed mode, show remaining time
+    return limitSeconds - elapsedSeconds;
+  }, [sessionType, elapsedSeconds, limitSeconds]);
+
   const currentCost = React.useMemo(() => {
     const rate = parseFloat(hourlyRate) || 0;
     const hours = elapsedSeconds / 3600;
     return (hours * rate).toFixed(2);
   }, [elapsedSeconds, hourlyRate]);
 
-  // Handle Name Save
+  // Edit Handlers
   const handleSaveName = () => {
-    if (tempName.trim()) {
-      onRename(tempName.trim());
-    } else {
-      setTempName(name); // Revert if empty
-    }
+    if (tempName.trim()) onRename(tempName.trim());
+    else setTempName(name);
     setIsEditingName(false);
   };
 
@@ -99,21 +191,36 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
     setIsEditingName(false);
   };
 
-  // Start Session
+  // Session Control
   const handleStart = () => {
     if (!hourlyRate) {
-      alert('الرجاء تحديد سعر الساعة');
+      alert('Enter Hourly Rate');
       return;
     }
+    
+    if (sessionType === 'FIXED') {
+      if (!fixedMinutes || parseInt(fixedMinutes) <= 0) {
+        alert('Please enter valid minutes for fixed session');
+        return;
+      }
+      // Request notification permission
+      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+        Notification.requestPermission();
+      }
+    }
+
+    playTone('start');
     const now = Date.now();
     setStartTime(now);
     setIsActive(true);
     setElapsedSeconds(0);
-    setIsEditingName(false); // Close edit if open
+    setIsTimeUp(false);
+    alarmPlayedRef.current = false;
+    setIsEditingName(false);
   };
 
-  // Stop Session
   const handleStop = () => {
+    playTone('stop');
     if (startTime) {
       const endTime = Date.now();
       const finalDuration = Math.floor((endTime - startTime) / 1000);
@@ -139,208 +246,287 @@ const ScreenCard: React.FC<ScreenCardProps> = ({ id, name, onRename, onSessionCo
     setStartTime(null);
     setElapsedSeconds(0);
     setCustomerName('');
-    
-    // Explicitly clear specific storage for this screen reset
-    // Note: The useEffect will overwrite this with the reset state immediately after, which is fine.
+    setIsTimeUp(false);
   };
 
-  // Timer Effect
+  // Timer Interval
   useEffect(() => {
     if (isActive && startTime) {
       timerRef.current = window.setInterval(() => {
         const now = Date.now();
-        setElapsedSeconds(Math.floor((now - startTime) / 1000));
+        const newElapsed = Math.floor((now - startTime) / 1000);
+        setElapsedSeconds(newElapsed);
+
+        // Check Fixed Time Limits
+        if (sessionType === 'FIXED') {
+          const limit = parseInt(fixedMinutes) * 60;
+          if (newElapsed >= limit) {
+            if (!isTimeUp) {
+              setIsTimeUp(true);
+            }
+            // Play alarm only once when crossing the threshold
+            if (!alarmPlayedRef.current) {
+              playTone('alarm');
+              sendNotification();
+              alarmPlayedRef.current = true;
+            }
+          }
+        }
       }, 1000);
     } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
+      if (timerRef.current) clearInterval(timerRef.current);
     }
-
     return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
+      if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isActive, startTime]);
+  }, [isActive, startTime, sessionType, fixedMinutes, isTimeUp]); // Added isTimeUp dependency to ensure state updates correctly
 
-  // Visual Timer Math
+  // Visuals for ring
+  // For Fixed: Scale 0 to 1 based on time remaining.
+  // For Open: Just spin or seconds.
+  const progressPercent = sessionType === 'FIXED' 
+    ? Math.min(Math.max(elapsedSeconds / limitSeconds, 0), 1)
+    : (elapsedSeconds % 60) / 60;
+
   const radius = 8;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - ((elapsedSeconds % 60) / 60) * circumference;
+  const strokeDashoffset = sessionType === 'FIXED'
+    ? circumference - (1 - progressPercent) * circumference // Fill up as time passes
+    : circumference - progressPercent * circumference;
+
+  const cardBorderClass = isTimeUp 
+    ? 'border-red-500 shadow-[0_0_50px_-5px_rgba(239,68,68,0.6)] animate-pulse' 
+    : isActive 
+      ? 'border-cyan-500 shadow-[0_0_30px_-5px_rgba(6,182,212,0.4)]' 
+      : 'border-white/10 hover:border-white/20';
+      
+  const cardBgClass = isTimeUp
+    ? 'bg-red-950/40'
+    : isActive 
+      ? 'bg-black/60' 
+      : 'bg-black/40';
 
   return (
-    <div className={`relative flex flex-col overflow-hidden rounded-3xl transition-all duration-300 group ${
-      isActive 
-        ? 'bg-slate-900 ring-2 ring-blue-500 shadow-[0_0_40px_-10px_rgba(59,130,246,0.4)] translate-y-[-2px]' 
-        : 'bg-slate-800/40 border border-slate-700/50 hover:bg-slate-800/80 hover:border-slate-600'
-    }`}>
+    <div className={`relative flex flex-col overflow-hidden transition-all duration-300 group backdrop-blur-xl border ${cardBorderClass} ${cardBgClass} ${isActive ? 'z-10 scale-[1.02]' : ''}`}>
       
-      {/* Active Indicator Strip */}
-      {isActive && (
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-cyan-400 to-blue-500 animate-pulse"></div>
-      )}
+      {/* Decorative corners */}
+      <div className={`absolute top-0 left-0 w-2 h-2 border-t border-l transition-colors ${isActive ? (isTimeUp ? 'border-red-500' : 'border-cyan-400') : 'border-white/20'}`}></div>
+      <div className={`absolute top-0 right-0 w-2 h-2 border-t border-r transition-colors ${isActive ? (isTimeUp ? 'border-red-500' : 'border-cyan-400') : 'border-white/20'}`}></div>
+      <div className={`absolute bottom-0 left-0 w-2 h-2 border-b border-l transition-colors ${isActive ? (isTimeUp ? 'border-red-500' : 'border-cyan-400') : 'border-white/20'}`}></div>
+      <div className={`absolute bottom-0 right-0 w-2 h-2 border-b border-r transition-colors ${isActive ? (isTimeUp ? 'border-red-500' : 'border-cyan-400') : 'border-white/20'}`}></div>
 
-      {/* Header Section */}
-      <div className="px-5 py-4 flex items-center justify-between border-b border-white/5 bg-white/[0.02]">
+      {/* Header */}
+      <div className={`px-5 py-4 flex items-center justify-between border-b ${isActive ? (isTimeUp ? 'border-red-500/30 bg-red-950/30' : 'border-cyan-500/30 bg-cyan-950/20') : 'border-white/5 bg-white/[0.02]'}`}>
         <div className="flex items-center gap-3 flex-1">
-          <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isActive ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-700/50 text-slate-400'}`}>
-            <Monitor className="w-5 h-5" />
+          <div className={`w-8 h-8 flex items-center justify-center transition-colors border ${isActive ? (isTimeUp ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-cyan-500/10 border-cyan-500/50 text-cyan-400') : 'bg-white/5 border-white/10 text-slate-500'}`}>
+            <Monitor className="w-4 h-4" />
           </div>
           
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             {isEditingName ? (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 <input 
                   type="text" 
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
-                  className="bg-slate-950 border border-blue-500/50 text-white text-sm rounded px-2 py-1 w-full focus:outline-none"
+                  className="bg-black border border-fuchsia-500 text-fuchsia-400 text-sm px-2 py-1 w-full focus:outline-none font-tech"
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveName();
                     if (e.key === 'Escape') handleCancelEdit();
                   }}
                 />
-                <button onClick={handleSaveName} className="text-green-400 hover:bg-green-400/10 p-1 rounded"><Check className="w-4 h-4" /></button>
-                <button onClick={handleCancelEdit} className="text-red-400 hover:bg-red-400/10 p-1 rounded"><X className="w-4 h-4" /></button>
+                <button onClick={handleSaveName} className="text-green-400 hover:bg-green-400/20 p-1"><Check className="w-4 h-4" /></button>
+                <button onClick={handleCancelEdit} className="text-red-400 hover:bg-red-400/20 p-1"><X className="w-4 h-4" /></button>
               </div>
             ) : (
               <div className="flex items-center gap-2 group/edit">
-                <h2 className="text-lg font-bold text-white leading-tight truncate max-w-[150px]">{name}</h2>
+                <h2 className={`text-lg font-bold font-tech tracking-wider uppercase truncate ${isActive ? (isTimeUp ? 'text-red-500 neon-glow' : 'text-cyan-400 neon-glow') : 'text-slate-300'}`}>{name}</h2>
                 {!isActive && (
                   <button 
                     onClick={() => setIsEditingName(true)}
-                    className="opacity-0 group-hover/edit:opacity-100 transition-opacity text-slate-500 hover:text-blue-400"
+                    className="opacity-0 group-hover/edit:opacity-100 transition-opacity text-slate-500 hover:text-fuchsia-400"
                   >
-                    <Pencil className="w-3.5 h-3.5" />
+                    <Pencil className="w-3 h-3" />
                   </button>
                 )}
               </div>
             )}
             
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`}></span>
-              <span className={`text-xs font-medium ${isActive ? 'text-green-400' : 'text-slate-500'}`}>
-                {isActive ? 'جلسة نشطة' : 'جاهز للبدء'}
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className={`w-1.5 h-1.5 ${isActive ? (isTimeUp ? 'bg-red-500 animate-bounce' : 'bg-cyan-400 animate-pulse') : 'bg-slate-600'}`}></span>
+              <span className={`text-[10px] font-mono uppercase tracking-widest ${isActive ? (isTimeUp ? 'text-red-500 font-bold' : 'text-cyan-400') : 'text-slate-500'}`}>
+                {isActive ? (isTimeUp ? 'TIME EXPIRED' : 'ACTIVE') : 'STANDBY'}
               </span>
             </div>
           </div>
         </div>
         
         {isActive && (
-          <div className="bg-blue-500/10 border border-blue-500/20 px-2 py-1 rounded text-xs text-blue-300 font-mono">
-            LIVE
+          <div className={`flex items-center gap-1 ${isTimeUp ? 'text-red-500' : 'text-fuchsia-500'} animate-pulse`}>
+            {isTimeUp ? <Bell className="w-4 h-4 fill-current animate-ping" /> : <Zap className="w-3 h-3 fill-current" />}
+            <span className="text-[10px] font-bold font-tech">{isTimeUp ? 'ALARM' : 'LIVE'}</span>
           </div>
         )}
       </div>
 
       {/* Main Content */}
-      <div className="p-5 flex-1 flex flex-col gap-5">
-        
+      <div className="p-5 flex-1 flex flex-col gap-5 relative">
+        {/* Scanline BG effect if active */}
+        {isActive && <div className={`absolute inset-0 z-0 pointer-events-none bg-[length:100%_4px,6px_100%] opacity-20 ${isTimeUp ? 'bg-[linear-gradient(rgba(50,0,0,0)_50%,rgba(50,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.1),rgba(255,0,0,0.05))]' : 'bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))]'}`}></div>}
+
+        {/* Mode Switcher (Only when not active) */}
+        {!isActive && (
+          <div className="flex bg-black/40 p-1 rounded-lg border border-white/10 relative z-10">
+            <button 
+              onClick={() => setSessionType('OPEN')}
+              className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded text-[10px] font-tech uppercase tracking-wider transition-all ${sessionType === 'OPEN' ? 'bg-cyan-950/50 text-cyan-400 border border-cyan-500/30' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              <Clock className="w-3 h-3" />
+              Open
+            </button>
+            <button 
+              onClick={() => setSessionType('FIXED')}
+              className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded text-[10px] font-tech uppercase tracking-wider transition-all ${sessionType === 'FIXED' ? 'bg-fuchsia-950/50 text-fuchsia-400 border border-fuchsia-500/30' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              <Hourglass className="w-3 h-3" />
+              Fixed
+            </button>
+          </div>
+        )}
+
+        {/* Fixed Duration Input (Only when not active and Fixed mode) */}
+        {!isActive && sessionType === 'FIXED' && (
+          <div className="relative z-10 animate-in fade-in slide-in-from-top-1">
+             <div className="flex items-center border border-fuchsia-500/50 bg-fuchsia-950/10 px-3 py-2 rounded-lg">
+                <span className="text-[10px] text-fuchsia-400 font-tech uppercase mr-2">Time (Min)</span>
+                <input 
+                  type="number"
+                  value={fixedMinutes}
+                  onChange={(e) => setFixedMinutes(e.target.value)}
+                  className="bg-transparent text-right w-full text-white font-mono focus:outline-none"
+                  placeholder="60"
+                />
+             </div>
+          </div>
+        )}
+
         {/* Timer Box */}
-        <div className={`relative rounded-2xl p-4 flex flex-col items-center justify-center border transition-colors ${
+        <div className={`relative p-6 flex flex-col items-center justify-center border transition-all z-10 ${
           isActive 
-            ? 'bg-slate-950/80 border-blue-500/30' 
-            : 'bg-slate-900/50 border-white/5'
+            ? (isTimeUp ? 'bg-red-950/20 border-red-500' : 'bg-black/80 border-cyan-500/30') 
+            : 'bg-white/[0.02] border-white/5'
         }`}>
           {/* Visual Timer Ring & Label */}
           <div className="flex items-center gap-2 mb-2">
-            <div className="relative w-5 h-5 flex items-center justify-center">
+             <div className="relative w-4 h-4 flex items-center justify-center">
                <svg className="w-full h-full transform -rotate-90">
-                 <circle cx="10" cy="10" r={radius} stroke="currentColor" strokeWidth="2.5" fill="transparent" className="text-slate-800" />
+                 <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" fill="transparent" className="text-slate-800" />
                  <circle 
-                   cx="10" 
-                   cy="10" 
-                   r={radius} 
+                   cx="8" 
+                   cy="8" 
+                   r="6" 
                    stroke="currentColor" 
-                   strokeWidth="2.5" 
+                   strokeWidth="2" 
                    fill="transparent" 
-                   strokeDasharray={circumference}
+                   strokeDasharray={2 * Math.PI * 6}
                    strokeDashoffset={strokeDashoffset}
-                   strokeLinecap="round"
-                   className={`transition-all duration-300 ease-in-out ${isActive ? 'text-blue-500' : 'text-slate-600'}`} 
+                   strokeLinecap="butt"
+                   className={`transition-all duration-1000 ease-linear ${
+                     isActive 
+                       ? (isTimeUp ? 'text-red-500' : (sessionType === 'FIXED' ? 'text-fuchsia-500' : 'text-cyan-400')) 
+                       : 'text-slate-600'
+                   }`} 
                  />
                </svg>
             </div>
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-              الوقت المستغرق
+            <span className={`text-[10px] uppercase tracking-[0.2em] font-tech ${isTimeUp ? 'text-red-500 font-bold' : 'text-slate-500'}`}>
+              {sessionType === 'FIXED' ? 'Remaining' : 'Duration'}
             </span>
           </div>
 
-          <div className={`text-5xl font-mono font-bold tracking-wider tabular-nums transition-colors ${isActive ? 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.1)]' : 'text-slate-600'}`}>
-            {formatTime(elapsedSeconds)}
+          <div className={`text-5xl font-tech font-bold tracking-widest tabular-nums transition-all ${
+            isActive 
+              ? (isTimeUp ? 'text-red-500 neon-glow animate-pulse' : (displayTime < 300 && sessionType === 'FIXED' ? 'text-yellow-500' : 'text-cyan-400 neon-glow')) 
+              : 'text-slate-700'
+          }`}>
+            {formatTime(displayTime)}
           </div>
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-slate-900/50 rounded-xl p-3 border border-white/5 hover:border-white/10 transition-colors focus-within:border-blue-500/50 focus-within:bg-slate-900">
-            <label className="block text-xs text-slate-500 mb-1.5">سعر الساعة</label>
-            <div className="flex items-center gap-2">
+        <div className="grid grid-cols-2 gap-4 relative z-10">
+          <div className="group/input relative">
+            <label className="block text-[10px] text-slate-500 mb-1 font-tech uppercase tracking-wider">Hourly Rate</label>
+            <div className="flex items-center border-b border-slate-700 group-focus-within/input:border-fuchsia-500 transition-colors bg-black/40 px-2 py-1">
               <input
                 type="number"
                 disabled={isActive}
                 value={hourlyRate}
                 onChange={(e) => setHourlyRate(e.target.value)}
-                className="w-full bg-transparent text-lg font-bold text-white placeholder-slate-600 focus:outline-none disabled:opacity-50"
-                placeholder="0"
+                className="w-full bg-transparent text-lg font-bold font-mono text-white placeholder-slate-700 focus:outline-none disabled:opacity-50 disabled:text-slate-500"
+                placeholder="00"
               />
-              <span className="text-xs font-medium text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">ج.م</span>
+              <span className="text-[10px] text-fuchsia-500 font-bold ml-1">EGP</span>
             </div>
           </div>
 
-          <div className={`rounded-xl p-3 border transition-colors ${
-            isActive 
-              ? 'bg-blue-900/10 border-blue-500/20' 
-              : 'bg-slate-900/50 border-white/5'
-          }`}>
-            <label className="block text-xs text-slate-500 mb-1.5">التكلفة الحالية</label>
-            <div className="flex items-center justify-between">
-              <span className={`text-lg font-bold ${isActive ? 'text-blue-400' : 'text-slate-400'}`}>
+          <div className={`transition-colors ${isActive ? 'opacity-100' : 'opacity-60'}`}>
+            <label className="block text-[10px] text-slate-500 mb-1 font-tech uppercase tracking-wider">Current Cost</label>
+            <div className="flex items-center justify-between border-b border-slate-700 bg-black/40 px-2 py-1">
+              <span className={`text-lg font-bold font-mono ${isActive ? 'text-fuchsia-400 drop-shadow-[0_0_5px_rgba(232,121,249,0.8)]' : 'text-slate-500'}`}>
                 {currentCost}
               </span>
-              <DollarSign className={`w-4 h-4 ${isActive ? 'text-blue-500/50' : 'text-slate-700'}`} />
+              <DollarSign className={`w-3 h-3 ${isActive ? 'text-fuchsia-500' : 'text-slate-700'}`} />
             </div>
           </div>
         </div>
 
         {/* Customer Name */}
-        <div className="relative group/input">
-          <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
-            <User className="w-4 h-4 text-slate-600 group-focus-within/input:text-blue-400 transition-colors" />
-          </div>
+        <div className="relative group/input z-10">
           <input
             type="text"
             disabled={isActive}
             value={customerName}
             onChange={(e) => setCustomerName(e.target.value)}
-            className="w-full bg-slate-900/30 border border-white/5 rounded-xl py-3 pr-10 pl-4 text-sm text-slate-300 placeholder-slate-600 focus:outline-none focus:bg-slate-900 focus:border-blue-500/30 transition-all disabled:opacity-50"
-            placeholder="اسم العميل (اختياري)"
+            className="w-full bg-black/30 border border-white/10 py-3 px-4 text-xs font-mono text-cyan-300 placeholder-slate-700 focus:outline-none focus:border-cyan-500/50 focus:bg-cyan-950/10 transition-all disabled:opacity-50"
+            placeholder="PLAYER NAME..."
           />
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <User className="w-3 h-3 text-slate-700 group-focus-within/input:text-cyan-500" />
+          </div>
         </div>
 
         {/* Action Button */}
-        <div className="mt-auto pt-2">
+        <div className="mt-auto pt-2 z-10">
           {!isActive ? (
             <button
               onClick={handleStart}
-              className="group relative w-full overflow-hidden rounded-xl bg-blue-600 p-3.5 transition-all hover:bg-blue-500 active:scale-[0.98]"
+              className={`group relative w-full overflow-hidden border p-3.5 transition-all active:scale-[0.99] ${
+                sessionType === 'FIXED' 
+                  ? 'bg-fuchsia-950/20 border-fuchsia-500/50 hover:bg-fuchsia-500/10 hover:border-fuchsia-400 hover:shadow-[0_0_20px_rgba(232,121,249,0.2)]'
+                  : 'bg-cyan-950/20 border-cyan-500/50 hover:bg-cyan-500/10 hover:border-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.2)]'
+              }`}
             >
-              <div className="relative z-10 flex items-center justify-center gap-2 font-bold text-white">
-                <Play className="w-5 h-5 fill-white/20" />
-                <span>بدء الجلسة</span>
+              <div className={`relative z-10 flex items-center justify-center gap-2 font-bold font-tech tracking-widest uppercase ${
+                sessionType === 'FIXED' ? 'text-fuchsia-400' : 'text-cyan-400'
+              }`}>
+                {sessionType === 'FIXED' ? <Hourglass className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                <span>{sessionType === 'FIXED' ? 'Start Timer' : 'Initialize'}</span>
               </div>
-              <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:animate-shimmer" />
+              {/* Button Glitch Effect Overlay */}
+              <div className={`absolute inset-0 translate-y-full transition-transform duration-300 group-hover:translate-y-0 ${
+                sessionType === 'FIXED' ? 'bg-fuchsia-400/10' : 'bg-cyan-400/10'
+              }`}></div>
             </button>
           ) : (
             <button
               onClick={handleStop}
-              className="group relative w-full overflow-hidden rounded-xl bg-red-500/10 border border-red-500/50 p-3.5 transition-all hover:bg-red-500 hover:border-red-500 active:scale-[0.98]"
+              className="group relative w-full overflow-hidden border border-red-500/50 bg-red-950/20 p-3.5 transition-all hover:bg-red-500/10 hover:border-red-400 hover:shadow-[0_0_20px_rgba(239,68,68,0.2)] active:scale-[0.99]"
             >
-              <div className="flex items-center justify-center gap-2 font-bold text-red-500 group-hover:text-white transition-colors">
-                <Square className="w-5 h-5 fill-current" />
-                <span>إيقاف وحساب</span>
+              <div className="flex items-center justify-center gap-2 font-bold text-red-500 font-tech tracking-widest uppercase group-hover:text-red-400 transition-colors">
+                <Square className="w-4 h-4 fill-current" />
+                <span>Terminate</span>
               </div>
             </button>
           )}
